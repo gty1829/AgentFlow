@@ -1,7 +1,7 @@
 {
-  "model_name": "openai/gpt-oss-120b",
-  "api_key": "${OPENROUTER_API_KEY}",
-  "base_url": "https://openrouter.ai/api/v1",
+  "model_name": "ep-20260317033626-qkz4b",
+  "api_key": "8407460c-9a3d-4a32-bb0d-43e91a74304f",
+  "base_url": "https://kspmas.ksyun.com/v1",
 
   "max_depth": 50,
   "branching_factor": 2,

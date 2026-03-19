@@ -223,6 +223,7 @@ from . import websearch
 from . import ds_tool
 from . import doc_tool
 from . import text2sql_tool
+from . import omni_tool
 __all__ = [
     "register_api_tool",
     "get_api_tool",

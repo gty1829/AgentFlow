@@ -20,15 +20,15 @@ aiofiles
 # ------------- Sandbox & Desktop Environment -------------
 playwright
 flask
-PyAutoGUI==0.9.54
+# PyAutoGUI==0.9.54
 python3-xlib==0.15
 Pillow==10.1.0
 numpy
 opencv-python
 lxml
-pygame
-pywinauto
-pyxcursor
+# pygame
+# pywinauto
+# pyxcursor
 requests-toolbelt
 docker
 
@@ -58,7 +58,7 @@ fastdtw
 librosa
 formulas
 tldextract
-acoustid
+# acoustid
 
 # ------------- Cloud (Alibaba Cloud, optional) -------------
 # alibabacloud-ecs20140526
@@ -66,10 +66,11 @@ acoustid
 # alibabacloud-tea-util
 
 # ------------- ML/DL (optional, uncomment if needed) -------------
-# torch>=2.6.0
+torch==2.8.0
 # transformers>=4.51.1
 # accelerate>=1.5.1
-# torchvision
+torchvision
+torchaudio
 # vllm>=0.10.0
 
 # ------------- Testing -------------

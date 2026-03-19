@@ -74,6 +74,7 @@ class TrajectorySampler:
         print(f"Available tools: {[t.get('name', 'unknown') for t in self.available_tools]}")
 
         # Create root node
+        # 创建根节点，把 seed_data 包装成根节点
         root_id = self._generate_node_id()
         root_node = TrajectoryNode(
             node_id=root_id,
@@ -95,12 +96,15 @@ class TrajectorySampler:
 
     async def _explore_node(self, node: TrajectoryNode, seed_data: str):
         """Explore from a node (async breadth-first for siblings)"""
+        # 如果超过最大深度，则返回
         if node.depth >= self.config.max_depth:
             return
 
+        # 根据当前深度决定分支数
         # Determine how many children to create
         num_children = self.config.branching_factor if node.depth < self.config.depth_threshold else 1
 
+        # 并发创建所有子节点
         # Create tasks for all children at this level
         child_tasks = []
         for i in range(num_children):
@@ -222,6 +226,8 @@ class TrajectorySampler:
 
     def _build_context(self, node: TrajectoryNode, seed_data: str) -> str:
         """Build context from current path"""
+        # 把当前节点的路径转换为一个步骤摘要，但是要注意：
+        # observation 目前只包含纯文本返回，不包含多模态数据
         context = f"Starting point: {seed_data}\n\n"
 
         # Trace back to root

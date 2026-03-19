@@ -10,9 +10,9 @@
       "visit_method": "jina",
       "content_limit": 50000,
       "enable_llm_summary": true,
-      "summary_model": "openai/gpt-oss-120b",
-      "openai_api_key": "${OPENROUTER_API_KEY}",
-      "openai_api_url": "https://openrouter.ai/api/v1"
+      "summary_model": "gpt-5.2",
+      "openai_api_key": "${VLM_API_KEY}",
+      "openai_api_url": "https://kspmas.ksyun.com/v1"
     }
   }
 }

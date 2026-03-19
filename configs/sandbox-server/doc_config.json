@@ -12,9 +12,9 @@
       "max_search_results": 10,
       "max_image_num": 10,
       "max_text_token": 20000,
-      "vlm_model": "openai/gpt-4o-mini",
-      "vlm_api_key": "${VLM_API_KEY}",
-      "vlm_api_url": "https://openrouter.ai/api/v1",
+      "vlm_model": "gpt-5.2",
+      "vlm_api_key": "8407460c-9a3d-4a32-bb0d-43e91a74304f",
+      "vlm_api_url": "https://kspmas.ksyun.com/v1",
       "vlm_max_tokens": 16384,
       "vlm_timeout": 300,
       "vlm_retry_max_attempts": 10
