@@ -443,10 +443,36 @@ class ExtractClipTool(BaseApiTool):
         os.makedirs(path, exist_ok=True)
 
     @staticmethod
+    async def _get_media_duration(mm_path: str) -> float:
+        process = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            mm_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            raise ToolBusinessError(
+                f"ffprobe failed: {stderr.decode('utf-8', errors='ignore')}",
+                ErrorCode.EXECUTION_ERROR,
+            )
+
+        try:
+            return float(stdout.decode("utf-8", errors="ignore").strip())
+        except ValueError:
+            raise ToolBusinessError(
+                f"Unable to parse media duration for: {mm_path}",
+                ErrorCode.EXECUTION_ERROR,
+            )
+
+    @staticmethod
     def _build_output_path(
         output_dir: str,
         mm_path: str,
-        idx: int,
         start_time: Union[int, float, str],
         end_time: Union[int, float, str],
         mode: str,
@@ -458,9 +484,12 @@ class ExtractClipTool(BaseApiTool):
         else:
             ext = ".mp4"
 
+        start_str = str(start_time).replace(':', '-').replace('.', '_')
+        end_str = str(end_time).replace(':', '-').replace('.', '_')
+
         return os.path.join(
             output_dir,
-            f"{base_name}_{mode}_{idx}_{str(start_time).replace(':', '-')}_{str(end_time).replace(':', '-')}{ext}"
+            f"{base_name}_{mode}_start_time_{start_str}-end_time_{end_str}{ext}"
         )
     
     async def _run_ffmpeg(self, command: List[str]) -> Dict[str, Any]:
@@ -481,7 +510,7 @@ class ExtractClipTool(BaseApiTool):
         mm_path: str,
         start_time: Union[int, float, str],
         end_time: Union[int, float, str],
-        output_path: str,
+        output_dir: str,
         mode: str,
     ) -> Dict[str, Any]:
         if not os.path.exists(mm_path):
@@ -492,6 +521,42 @@ class ExtractClipTool(BaseApiTool):
 
         start_time = self._normalize_time(start_time)
         end_time = self._normalize_time(end_time)
+
+        try:
+            start_time_float = float(start_time)
+            end_time_float = float(end_time)
+        except ValueError:
+            raise ToolBusinessError(
+                f"start_time and end_time must be numeric or numeric strings, got start_time={start_time}, end_time={end_time}",
+                ErrorCode.PARAM_ERROR,
+            )
+
+        if start_time_float >= end_time_float:
+            raise ToolBusinessError(
+                f"start_time must be smaller than end_time, got start_time={start_time}, end_time={end_time}",
+                ErrorCode.PARAM_ERROR,
+            )
+
+        duration = await self._get_media_duration(mm_path)
+
+        if end_time_float > duration:
+            end_time_float = duration
+            end_time = str(end_time_float)
+
+        if start_time_float >= end_time_float:
+            raise ToolBusinessError(
+                f"start_time must be smaller than effective end_time, got start_time={start_time}, end_time={end_time}",
+                ErrorCode.PARAM_ERROR,
+            )
+
+        # 在时间校正之后再生成 output_path
+        output_path = self._build_output_path(
+            output_dir=output_dir,
+            mm_path=mm_path,
+            start_time=start_time,
+            end_time=end_time,
+            mode=mode,
+        )
 
         # 核心逻辑：
         # av    -> 默认输出音视频
@@ -589,26 +654,31 @@ class ExtractClipTool(BaseApiTool):
                     ErrorCode.PARAM_ERROR,
                 )
 
-            output_path = self._build_output_path(
-                output_dir=output_dir,
-                mm_path=mm_path,
-                idx=idx,
-                start_time=start_time,
-                end_time=end_time,
-                mode=mode,
-            )
+            # output_path = self._build_output_path(
+            #     output_dir=output_dir,
+            #     mm_path=mm_path,
+            #     idx=idx,
+            #     start_time=start_time,
+            #     end_time=end_time,
+            #     mode=mode,
+            # )
 
             single_result = await self._extract_single_clip(
                 mm_path=mm_path,
                 start_time=start_time,
                 end_time=end_time,
-                output_path=output_path,
+                output_dir=output_dir,
                 mode=mode,
             )
 
-            base64_data, fmt, media_type = _encode_file_to_base64(output_path)
+            base64_data, fmt, media_type = _encode_file_to_base64(single_result['output_path'])
             mm_result.append({"base64_data": base64_data, "fmt": fmt, "media_type": media_type})
-            text_result += f"Clip {idx}: mode={mode}, `{start_time}` -> `{end_time}`, saved to `{output_path}`"
+            # text_result += f"Clip {idx}: mode={mode}, `{start_time}` -> `{end_time}`, saved to `{output_path}`"
+            text_result += (
+                f"Clip {idx}: mode={mode}, "
+                f"`{single_result['start_time']}` -> `{single_result['end_time']}`, "
+                f"saved to `{single_result['output_path']}`"
+            )
             text_result += "\n\n=============================\n\n"
         text_result = text_result.strip("\n\n=============================\n\n")
 
@@ -628,6 +698,7 @@ class StatelessCodeExecutionTool(BaseApiTool):
         self,
         code: str,
         timeout: float = 5.0,
+        **kwargs,
     ):
         executor = PersistentPythonExecutor()
 
@@ -647,9 +718,18 @@ class StatelessCodeExecutionTool(BaseApiTool):
         text_result = text_result.strip("\n\n=============================\n\n")
 
         mm_result = []
+
+        mm_exts = [
+            'jpg', 'jpeg', 'png', 'webp',
+            'mp3', 'mpeg', 'mpga', 'wav', 'flac', 'm4a', 'ogg',
+            'mp4', 'mov', 'avi', 'mkv', 'webm',
+        ]
+
         if os.path.exists(stdout):
-            base64_data, fmt, media_type = _encode_file_to_base64(stdout)
-            mm_result.append({"base64_data": base64_data, "fmt": fmt, "media_type": media_type})
+            ext = stdout.rsplit(".", 1)[-1].lower()
+            if ext in mm_exts:
+                base64_data, fmt, media_type = _encode_file_to_base64(stdout)
+                mm_result.append({"base64_data": base64_data, "fmt": fmt, "media_type": media_type})
         return {
             "result": text_result,
             "mm_result": mm_result,

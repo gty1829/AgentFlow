@@ -7,7 +7,6 @@
     "apis": {
       "omni": {
         "max_search_results": 10,
-
         "completion_config":{
           "model": "ep-20260317031559-av3m2",
           "api_key": "8407460c-9a3d-4a32-bb0d-43e91a74304f",

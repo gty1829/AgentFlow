@@ -23,10 +23,10 @@ def get_omni_tool_schemas() -> List[Dict[str, Any]]:
 
 def get_omni_search_schema() -> Dict[str, Any]:
     """
-    Schema for omni:search_caption tool - search keyword matches in video captions.
+    Schema for omni:search tool - search keyword matches in video captions.
     """
     return {
-        "name": "omni:search_caption",
+        "name": "omni:search",
         "description": (
             "Search for one or more keywords in all video clip captions and return matched clip metadata. "
             "Matching is case-insensitive. This tool is useful for locating relevant video segments based "
