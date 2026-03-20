@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Tuple, Union
 from . import register_api_tool
 from ..error_codes import ErrorCode
 from .base_tool import BaseApiTool, ToolBusinessError
+from .code_executor import PersistentPythonExecutor
 
 logger = logging.getLogger("OmniTool")
 
@@ -379,7 +380,7 @@ class SearchTool(BaseApiTool):
             search_result += "\n\n=============================\n\n"
         search_result = search_result.strip("\n\n=============================\n\n")
 
-        return {"result": search_result}
+        return {"result": search_result, "mm_result": []}
 
 class ReadTool(BaseApiTool):
     """
@@ -407,6 +408,11 @@ class ReadTool(BaseApiTool):
         mm_result = []
         read_result = ""
         for mm_path in mm_paths:
+            if not os.path.exists(mm_path):
+                read_result += f"File `{mm_path}` does not exist"
+                read_result += "\n\n=============================\n\n"
+                continue
+                
             base64_data, fmt, media_type = self._single_read(mm_path)
             mm_result.append({"base64_data": base64_data, "fmt": fmt, "media_type": media_type})
             read_result += f"A {media_type} read for `{mm_path}` found"
@@ -616,9 +622,38 @@ class StatelessCodeExecutionTool(BaseApiTool):
     Execute code
     """
     def __init__(self):
-        super().__init__(tool_name="omni:stateless_code_execute", resource_type="omni")
-    
-    pass
+        super().__init__(tool_name="omni:run_python", resource_type="omni")
+
+    async def execute(
+        self,
+        code: str,
+        timeout: float = 5.0,
+    ):
+        executor = PersistentPythonExecutor()
+
+        run_result = executor.run(code, timeout=timeout)
+        ok = run_result.get("ok", False)
+        stdout = run_result.get("stdout", "").strip()
+        stderr = run_result.get("stderr", "").strip()
+        error = run_result.get("error", "")
+
+        executor.close()
+
+        text_result = ""
+        if ok:
+            text_result += f"Code execution succeeded:\n\n{stdout}"
+        else:
+            text_result += f"Code execution failed:\n\n{stderr}\n\n{error}"
+        text_result = text_result.strip("\n\n=============================\n\n")
+
+        mm_result = []
+        if os.path.exists(stdout):
+            base64_data, fmt, media_type = _encode_file_to_base64(stdout)
+            mm_result.append({"base64_data": base64_data, "fmt": fmt, "media_type": media_type})
+        return {
+            "result": text_result,
+            "mm_result": mm_result,
+        }
 
 # Register tools
 search = register_api_tool(
@@ -640,7 +675,7 @@ extract_clip = register_api_tool(
 )(ExtractClipTool())
 
 stateless_code_execute = register_api_tool(
-    name="omni:stateless_code_execute",
+    name="omni:run_python",
     config_key="omni",
     description="Execute code"
 )(StatelessCodeExecutionTool())

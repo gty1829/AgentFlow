@@ -13,7 +13,7 @@ from .vm_tools import get_vm_tool_schemas
 from .doc_tools import get_doc_tool_schemas
 from .ds_tools import get_ds_tool_schemas
 from .sql_tools import get_sql_tool_schemas
-
+from .omni_tools import get_omni_tool_schemas
 
 def _tool_name_aliases(name: str) -> set[str]:
     """Return equivalent tool-name variants across '-', '_' and ':' separators."""
@@ -51,6 +51,7 @@ def get_tool_schemas(allowed_tools: Optional[List[str]] = None) -> List[Dict[str
         + get_doc_tool_schemas()
         + get_ds_tool_schemas()
         + get_sql_tool_schemas()
+        + get_omni_tool_schemas()
     )
 
     if not allowed_tools:
@@ -124,4 +125,5 @@ __all__ = [
     "get_doc_tool_schemas",
     "get_ds_tool_schemas",
     "get_sql_tool_schemas",
+    "get_omni_tool_schemas",
 ]
