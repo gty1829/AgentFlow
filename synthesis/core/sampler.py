@@ -53,7 +53,7 @@ class TrajectorySampler:
 
         print(f"\n{'='*60}")
         print(f"Starting Trajectory Sampling")
-        print(f"Seed: {seed_data[:100]}...")
+        print(f"Seed: video_id: {seed_data['content']['video_id']} | start_time: {seed_data['content']['start_time']} | end_time: {seed_data['content']['end_time']} | caption: {seed_data['content']['caption'][:100]}...")
         if seed_kwargs:
             print(f"Kwargs: {seed_kwargs}")
         print(f"{'='*60}\n")
@@ -78,7 +78,7 @@ class TrajectorySampler:
         root_id = self._generate_node_id()
         root_node = TrajectoryNode(
             node_id=root_id,
-            observation=f"Starting point: {seed_data}",
+            observation={"text_info":f"Starting point: {seed_data['content']}", "mm_info": []},
             intent="Initialize exploration",
             action=None,
             parent_id=None,
@@ -119,7 +119,7 @@ class TrajectorySampler:
         retry_wait = 0.5
         intent = ""
         action: Optional[Dict[str, Any]] = None
-        observation = ""
+        observation = {"text_info": "", "mm_info": []}
         for attempt in range(max_retries + 1):
             try:
                 # Generate next action
@@ -178,6 +178,7 @@ class TrajectorySampler:
         prompt = self._build_exploration_prompt(context, seed_data, used_actions_block)
 
         try:
+            # 只要保证返回的content是一个列表就没问题了
             response = await async_chat_completion(
                 self.client,
                 model=self.config.model_name,
@@ -207,7 +208,7 @@ class TrajectorySampler:
             print(f"  ⚠️ LLM generation failed: {e}")
             return "", None
 
-    async def _execute_action(self, action: Dict[str, Any]) -> str:
+    async def _execute_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
         """Execute an action via worker (async)"""
         tool_name = action.get("tool_name", "")
         parameters = action.get("parameters", {})
@@ -228,7 +229,8 @@ class TrajectorySampler:
         """Build context from current path"""
         # 把当前节点的路径转换为一个步骤摘要，但是要注意：
         # observation 目前只包含纯文本返回，不包含多模态数据
-        context = f"Starting point: {seed_data}\n\n"
+        # context = f"Starting point: {seed_data}\n\n"
+        context = {"text_info":f"Starting point: {seed_data['content']}", "mm_info": []},
 
         # Trace back to root
         path = []
@@ -240,13 +242,14 @@ class TrajectorySampler:
 
         # Format path
         for i, n in enumerate(path, 1):
-            context += f"Step {i}:\n"
-            context += f"  Intent: {n.intent}\n"
+            context["text_info"] += f"Step {i}:\n"
+            context["text_info"] += f"  Intent: {n.intent}\n"
             if n.action:
-                context += f"  Action: {n.action.get('tool_name', 'unknown')}\n"
-                context += f"  Parameters: {json.dumps(n.action.get('parameters', {}), ensure_ascii=False)}\n"
-            obs_preview = n.observation[:500] + "..." if len(n.observation) > 500 else n.observation
-            context += f"  Observation: {obs_preview}\n\n"
+                context["text_info"] += f"  Action: {n.action.get('tool_name', 'unknown')}\n"
+                context["text_info"] += f"  Parameters: {json.dumps(n.action.get('parameters', {}), ensure_ascii=False)}\n"
+                context["mm_info"].extend(n.observation["mm_info"])
+            obs_preview = n.observation["text_info"][:500] + "..." if len(n.observation["text_info"]) > 500 else n.observation["text_info"]
+            context["text_info"] += f"  Observation: {obs_preview}\n\n"
 
         return context
 

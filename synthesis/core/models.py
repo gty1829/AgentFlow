@@ -10,7 +10,7 @@ from typing import Dict, List, Any, Optional
 class TrajectoryNode:
     """Single node in a trajectory tree"""
     node_id: str
-    observation: str
+    observation: Dict[str, Any]
     intent: str
     action: Optional[Dict[str, Any]] = None
     parent_id: Optional[str] = None
