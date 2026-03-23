@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, fields
 
 @dataclass
 class SynthesisConfig:
-    """RAG synthesis configuration"""
+    completion_config: Dict[str, Any] = field(default_factory=list)
 
     # I/O paths
     seeds_file: Optional[str] = None
@@ -30,11 +30,6 @@ class SynthesisConfig:
 
     # Seed description
     seed_description: str = ""
-
-    # Model configuration
-    model_name: str = "gpt-4.1-2025-04-14"
-    api_key: str = ""
-    base_url: str = ""
 
     # Trajectory sampling configuration
     max_depth: int = 5

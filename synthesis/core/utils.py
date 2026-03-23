@@ -3,9 +3,10 @@ import json
 import re
 import time
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, Tuple, Type
+from typing import Any, Dict, Tuple, Type, List
 import pdb
 
+import requests
 import openai
 
 
@@ -115,23 +116,293 @@ def chat_completion(
             time.sleep(retry_wait * (retry_backoff ** attempt))
 
 
+# async def async_chat_completion(
+#     client: openai.OpenAI,
+#     *,
+#     max_retries: int = 3,
+#     retry_wait: float = 0.5,
+#     retry_backoff: float = 2.0,
+#     retry_exceptions: Tuple[Type[BaseException], ...] = (Exception,),
+#     **kwargs: Any
+# ) -> Any:
+#     loop = asyncio.get_event_loop()
+#     for attempt in range(max_retries + 1):
+#         try:
+#             return await loop.run_in_executor(
+#                 None,
+#                 lambda: client.chat.completions.create(**kwargs)
+#             )
+#         except retry_exceptions as e:
+#             if attempt >= max_retries:
+#                 raise
+#             await asyncio.sleep(retry_wait * (retry_backoff ** attempt))
+
+
 async def async_chat_completion(
-    client: openai.OpenAI,
-    *,
-    max_retries: int = 3,
-    retry_wait: float = 0.5,
-    retry_backoff: float = 2.0,
-    retry_exceptions: Tuple[Type[BaseException], ...] = (Exception,),
-    **kwargs: Any
+    config: Any,
+    messages: List[Dict[str, Any]],
 ) -> Any:
-    loop = asyncio.get_event_loop()
-    for attempt in range(max_retries + 1):
+    loop = asyncio.get_running_loop()
+    model = config.get("model", "")
+
+    return await loop.run_in_executor(
+        None,
+        lambda: completion(
+            messages=messages,
+            model=model,
+            completion_config=config,
+        )
+    )
+
+class CompletionError(Exception):
+    pass
+
+
+def _is_gemini_model(model: str) -> bool:
+    return "gemini" in model.lower() or "mgg" in model.lower() or "ep-20260317031559-av3m2" in model.lower()
+
+
+def _messages_to_gemini_contents(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Convert OpenAI-style messages to Gemini-style contents.
+    Supports:
+      - string content
+      - list content with text / image_url / video_url / audio_url
+    """
+    contents: List[Dict[str, Any]] = []
+
+    for msg in messages:
+        role = msg.get("role", "user")
+        raw_content = msg.get("content", "")
+
+        gemini_role = "model" if role == "assistant" else "user"
+        parts: List[Dict[str, Any]] = []
+
+        if isinstance(raw_content, str):
+            parts.append({"text": raw_content})
+
+        elif isinstance(raw_content, list):
+            for item in raw_content:
+                if not isinstance(item, dict):
+                    parts.append({"text": str(item)})
+                    continue
+
+                item_type = item.get("type")
+
+                if item_type == "text":
+                    parts.append({"text": item.get("text", "")})
+
+                elif item_type in ("image_url", "video_url", "audio_url"):
+                    media_obj = item.get(item_type, {}) or {}
+                    url = media_obj.get("url", "")
+                    if not isinstance(url, str) or not url.startswith("data:"):
+                        parts.append({"text": f"[unsupported media url]"})
+                        continue
+
+                    try:
+                        header, b64_data = url.split(",", 1)
+                        mime_type = header[len("data:"):].split(";")[0]
+                    except Exception:
+                        parts.append({"text": "[invalid media data url]"})
+                        continue
+
+                    parts.append(
+                        {
+                            "inline_data": {
+                                "mime_type": mime_type,
+                                "data": b64_data,
+                            }
+                        }
+                    )
+
+                else:
+                    parts.append({"text": str(item)})
+
+        else:
+            parts.append({"text": str(raw_content)})
+
+        contents.append(
+            {
+                "role": gemini_role,
+                "parts": parts,
+            }
+        )
+
+    return contents
+
+
+def _build_openai_payload(
+    messages: List[Dict[str, Any]],
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    #top_p: float,
+    # top_k: int,
+    # response_format: Dict[str, Any],
+    # extra_body: Dict[str, Any],
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        # **extra_body,
+    }
+
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    # if top_p is not None:
+    #     payload["top_p"] = top_p
+    # if top_k is not None:
+    #     payload["top_k"] = top_k
+    # if response_format is not None:
+    #     payload["response_format"] = response_format
+
+    return payload
+
+
+def _build_gemini_payload(
+    messages: List[Dict[str, Any]],
+    temperature: float,
+    max_tokens: int,
+    # top_p: float,
+    # top_k: int,
+    # extra_body: Dict[str, Any],
+) -> Dict[str, Any]:
+    generation_config: Dict[str, Any] = {
+        "temperature": temperature,
+    }
+
+    if max_tokens is not None:
+        generation_config["maxOutputTokens"] = max_tokens
+    # if top_p is not None:
+    #     generation_config["topP"] = top_p
+    # if top_k is not None:
+    #     generation_config["topK"] = top_k
+
+    payload: Dict[str, Any] = {
+        "contents": _messages_to_gemini_contents(messages),
+        "generationConfig": generation_config,
+        # **extra_body,
+    }
+    return payload
+
+
+def _parse_openai_response(data: Dict[str, Any]) -> str:
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except Exception as e:
+        raise CompletionError(f"Invalid OpenAI response format: {data}") from e
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text_parts.append(item.get("text", ""))
+        return "\n".join(text_parts).strip()
+
+    return str(content)
+
+
+def _parse_gemini_response(data: Dict[str, Any]) -> str:
+    try:
+        candidates = data.get("candidates") or []
+        if not candidates:
+            return ""
+
+        content = candidates[0].get("content") or {}
+        parts = content.get("parts") or []
+
+        text_parts = []
+        for part in parts:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                text_parts.append(part["text"])
+
+        return "\n".join(text_parts).strip()
+    except Exception as e:
+        raise CompletionError(f"Invalid Gemini response format: {data}") from e
+
+
+def completion(
+    messages: List[Dict[str, Any]],
+    model: str,
+    completion_config: Dict,   # completion config
+) -> str:
+    api_url = completion_config.get("api_url", "")
+    api_key = completion_config.get("api_key", "")
+    connect_timeout = completion_config.get("connect_timeout", 300)
+    read_timeout = completion_config.get("read_timeout", 180)
+    temperature = completion_config.get("temperature", 0.7)
+    max_tokens = completion_config.get("max_tokens", 32768)
+    # top_p = completion_config.get("top_p", 0.95)
+    # top_k = completion_config.get("top_k", 20)
+    # response_format = completion_config.get("response_format", {})
+    # extra_body = completion_config.get("extra_body", {})
+    max_retry = completion_config.get("max_retry", 3)
+    retry_interval = completion_config.get("retry_interval", 0.5)
+
+    if not api_url:
+        raise ValueError("api_url is required")
+
+    is_gemini = _is_gemini_model(model)
+
+    headers = {
+        "Content-Type": "application/json",
+    }
+
+    # 默认先按 Bearer 兼容；如果你后面遇到 query ?key=... 的 Gemini 网关，再单独改
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    if is_gemini:
+        payload = _build_gemini_payload(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            # top_p=top_p,
+            # top_k=top_k,
+            # extra_body=extra_body,
+        )
+    else:
+        payload = _build_openai_payload(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            # top_p=top_p,
+            # top_k=top_k,
+            # response_format=response_format,
+            # extra_body=extra_body,
+        )
+
+    last_error = None
+
+    for attempt in range(max_retry):
         try:
-            return await loop.run_in_executor(
-                None,
-                lambda: client.chat.completions.create(**kwargs)
+            resp = requests.post(
+                api_url,
+                headers=headers,
+                data=json.dumps(payload),
+                # json=json.dumps(payload),
+                timeout=(connect_timeout, read_timeout),
             )
-        except retry_exceptions as e:
-            if attempt >= max_retries:
-                raise
-            await asyncio.sleep(retry_wait * (retry_backoff ** attempt))
+            resp.raise_for_status()
+
+            data = resp.json()
+
+            if is_gemini:
+                return _parse_gemini_response(data)
+            return _parse_openai_response(data)
+
+        except Exception as e:
+            last_error = e
+            if attempt < max_retry - 1:
+                time.sleep(retry_interval)
+            else:
+                raise CompletionError(
+                    f"Completion failed after {max_retry} retries: {e}"
+                ) from e
+
+    raise CompletionError(f"Completion failed: {last_error}")

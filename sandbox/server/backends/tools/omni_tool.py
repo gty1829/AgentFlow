@@ -20,259 +20,6 @@ from .base_tool import BaseApiTool, ToolBusinessError
 from .code_executor import PersistentPythonExecutor
 
 logger = logging.getLogger("OmniTool")
-
-class CompletionError(Exception):
-    pass
-
-
-def _is_gemini_model(model: str) -> bool:
-    return "gemini" in model.lower() or "mgg" in model.lower() or "ep-20260317031559-av3m2" in model.lower()
-
-
-def _messages_to_gemini_contents(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Convert OpenAI-style messages to Gemini-style contents.
-    Supports:
-      - string content
-      - list content with text / image_url / video_url / audio_url
-    """
-    contents: List[Dict[str, Any]] = []
-
-    for msg in messages:
-        role = msg.get("role", "user")
-        raw_content = msg.get("content", "")
-
-        gemini_role = "model" if role == "assistant" else "user"
-        parts: List[Dict[str, Any]] = []
-
-        if isinstance(raw_content, str):
-            parts.append({"text": raw_content})
-
-        elif isinstance(raw_content, list):
-            for item in raw_content:
-                if not isinstance(item, dict):
-                    parts.append({"text": str(item)})
-                    continue
-
-                item_type = item.get("type")
-
-                if item_type == "text":
-                    parts.append({"text": item.get("text", "")})
-
-                elif item_type in ("image_url", "video_url", "audio_url"):
-                    media_obj = item.get(item_type, {}) or {}
-                    url = media_obj.get("url", "")
-                    if not isinstance(url, str) or not url.startswith("data:"):
-                        parts.append({"text": f"[unsupported media url]"})
-                        continue
-
-                    try:
-                        header, b64_data = url.split(",", 1)
-                        mime_type = header[len("data:"):].split(";")[0]
-                    except Exception:
-                        parts.append({"text": "[invalid media data url]"})
-                        continue
-
-                    parts.append(
-                        {
-                            "inline_data": {
-                                "mime_type": mime_type,
-                                "data": b64_data,
-                            }
-                        }
-                    )
-
-                else:
-                    parts.append({"text": str(item)})
-
-        else:
-            parts.append({"text": str(raw_content)})
-
-        contents.append(
-            {
-                "role": gemini_role,
-                "parts": parts,
-            }
-        )
-
-    return contents
-
-
-def _build_openai_payload(
-    messages: List[Dict[str, Any]],
-    model: str,
-    temperature: float,
-    max_tokens: int,
-    top_p: float,
-    top_k: int,
-    response_format: Dict[str, Any],
-    extra_body: Dict[str, Any],
-) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        **extra_body,
-    }
-
-    if max_tokens is not None:
-        payload["max_tokens"] = max_tokens
-    if top_p is not None:
-        payload["top_p"] = top_p
-    if top_k is not None:
-        payload["top_k"] = top_k
-    if response_format is not None:
-        payload["response_format"] = response_format
-
-    return payload
-
-
-def _build_gemini_payload(
-    messages: List[Dict[str, Any]],
-    temperature: float,
-    max_tokens: int,
-    top_p: float,
-    top_k: int,
-    extra_body: Dict[str, Any],
-) -> Dict[str, Any]:
-    generation_config: Dict[str, Any] = {
-        "temperature": temperature,
-    }
-
-    if max_tokens is not None:
-        generation_config["maxOutputTokens"] = max_tokens
-    if top_p is not None:
-        generation_config["topP"] = top_p
-    if top_k is not None:
-        generation_config["topK"] = top_k
-
-    payload: Dict[str, Any] = {
-        "contents": _messages_to_gemini_contents(messages),
-        "generationConfig": generation_config,
-        **extra_body,
-    }
-    return payload
-
-
-def _parse_openai_response(data: Dict[str, Any]) -> str:
-    try:
-        content = data["choices"][0]["message"]["content"]
-    except Exception as e:
-        raise CompletionError(f"Invalid OpenAI response format: {data}") from e
-
-    if isinstance(content, str):
-        return content
-
-    if isinstance(content, list):
-        text_parts = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                text_parts.append(item.get("text", ""))
-        return "\n".join(text_parts).strip()
-
-    return str(content)
-
-
-def _parse_gemini_response(data: Dict[str, Any]) -> str:
-    try:
-        candidates = data.get("candidates") or []
-        if not candidates:
-            return ""
-
-        content = candidates[0].get("content") or {}
-        parts = content.get("parts") or []
-
-        text_parts = []
-        for part in parts:
-            if isinstance(part, dict) and isinstance(part.get("text"), str):
-                text_parts.append(part["text"])
-
-        return "\n".join(text_parts).strip()
-    except Exception as e:
-        raise CompletionError(f"Invalid Gemini response format: {data}") from e
-
-
-def completion(
-    messages: List[Dict[str, Any]],
-    model: str,
-    completion_config: Dict,   # completion config
-) -> str:
-    api_url = completion_config.api_url
-    api_key = completion_config.api_key
-    connect_timeout = completion_config.connect_timeout
-    read_timeout = completion_config.read_timeout
-    temperature = completion_config.temperature
-    max_tokens = completion_config.max_tokens
-    top_p = completion_config.top_p
-    top_k = completion_config.top_k
-    response_format = completion_config.response_format
-    extra_body = completion_config.extra_body or {}
-    max_retry = completion_config.max_retry
-    retry_interval = completion_config.retry_interval
-
-    if not api_url:
-        raise ValueError("completion_config.api_url is required")
-
-    is_gemini = _is_gemini_model(model)
-
-    headers = {
-        "Content-Type": "application/json",
-    }
-
-    # 默认先按 Bearer 兼容；如果你后面遇到 query ?key=... 的 Gemini 网关，再单独改
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    if is_gemini:
-        payload = _build_gemini_payload(
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
-            top_k=top_k,
-            extra_body=extra_body,
-        )
-    else:
-        payload = _build_openai_payload(
-            messages=messages,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
-            top_k=top_k,
-            response_format=response_format,
-            extra_body=extra_body,
-        )
-
-    last_error = None
-
-    for attempt in range(max_retry):
-        try:
-            resp = requests.post(
-                api_url,
-                headers=headers,
-                json=payload,
-                timeout=(connect_timeout, read_timeout),
-            )
-            resp.raise_for_status()
-
-            data = resp.json()
-
-            if is_gemini:
-                return _parse_gemini_response(data)
-            return _parse_openai_response(data)
-
-        except Exception as e:
-            last_error = e
-            if attempt < max_retry - 1:
-                time.sleep(retry_interval)
-            else:
-                raise CompletionError(
-                    f"Completion failed after {max_retry} retries: {e}"
-                ) from e
-
-    raise CompletionError(f"Completion failed: {last_error}")
-
     
 def _encode_file_to_base64(file_path: str) -> Tuple[str, str, str]:
     """
@@ -320,67 +67,224 @@ def _encode_file_to_base64(file_path: str) -> Tuple[str, str, str]:
 
 class SearchTool(BaseApiTool):
     """
-    用于读取所有包含待搜索关键词的caption
+    根据关键词搜索 caption，并返回距离指定 video_id 最近的若干条结果。
+    注意：key_words 中的每个 key_word 会单独搜索。
     """
     def __init__(self):
-        super().__init__(tool_name="omni:search_caption", resource_type="omni")
+        super().__init__(tool_name="omni:search", resource_type="omni")
 
-    def single_search(
+    def _normalize_keywords(self, key_words: Union[str, List[str]]) -> List[str]:
+        # 会对搜索词做去重
+        if isinstance(key_words, str):
+            key_words = [key_words]
+
+        result = []
+        seen = set()
+        for kw in key_words:
+            if not isinstance(kw, str):
+                continue
+            kw = kw.strip()
+            if not kw:
+                continue
+            kw_lower = kw.lower()
+            if kw_lower in seen:
+                continue
+            seen.add(kw_lower)
+            result.append(kw)
+        return result
+
+    def _find_target_index(
         self,
+        video_id: str,
+        video_clips_info: List[Dict[str, Any]],
+    ) -> int:
+        for idx, clip in enumerate(video_clips_info):
+            if str(clip.get("video_id")) == str(video_id):
+                return idx
+        return -1
+
+    def _match_single_keyword(
+        self,
+        caption: str,
+        key_word: str,
+    ) -> bool:
+        if not caption:
+            return False
+        return key_word.lower() in caption.lower()
+
+    def search_nearest_matches_for_single_keyword(
+        self,
+        video_id: str,
         key_word: str,
         video_clips_info: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        single_search_result = []
-        for video_clip_info in video_clips_info:
-            caption = video_clip_info.get('caption')
-            if key_word.lower() in caption.lower():
-                single_search_result.append(video_clip_info)
+        target_index = self._find_target_index(video_id, video_clips_info)
+        if target_index == -1:
+            raise ToolBusinessError(
+                f"video_id `{video_id}` not found",
+                ErrorCode.EXECUTION_ERROR
+            )
 
-        return single_search_result
+        matched_results = []
+        for idx, clip in enumerate(video_clips_info):
+            if idx == target_index:
+                continue
+            caption = clip.get("caption", "")
+            if self._match_single_keyword(caption, key_word):
+                matched_results.append({
+                    "distance": abs(idx - target_index),
+                    "index": idx,
+                    "video_clip_info": clip,
+                })
+
+        # 按距离排序；距离相同则按索引排序
+        matched_results.sort(key=lambda x: (x["distance"], x["index"]))
+
+        # 这里只返回全部结果，不做截断
+        result = [dict(item["video_clip_info"]) for item in matched_results]
+        return result
 
     async def execute(
         self,
         key_words: Union[str, List[str]],
         max_search_results: int,
+        video_id: str,
         **kwargs,
     ):
         """
-        Search for keywords in all captions
-        
+        Search captions by keywords and return the nearest matched clips to the target video_id.
+
         Args:
-            key_words: Keywords (string or list)
-            max_search_results: Maximum number of search results
+            key_words: 关键词，可以是字符串或字符串列表。每个关键词会单独搜索。
+            max_search_results: 每个关键词展示结果上限
+            video_id: 目标视频片段id
         """
-        if isinstance(key_words, str):       
-            key_words = [key_words]
-        
-        # jsonl中的每一个视频info: video_path, video_clips_info(instruction会去掉放到seeds.jsonl中), output_dir(视频输出目录)
-        # 都会保存为一个独立的json文件
-        video_info_path = kwargs.get('video_info_path')   
+        if max_search_results <= 0:
+            raise ToolBusinessError(
+                "max_search_results must be greater than 0",
+                ErrorCode.EXECUTION_ERROR
+            )
 
+        normalized_keywords = self._normalize_keywords(key_words)
+        if not normalized_keywords:
+            raise ToolBusinessError(
+                "key_words must not be empty",
+                ErrorCode.EXECUTION_ERROR
+            )
+
+        video_info_path = kwargs.get("video_info_path")
         if not video_info_path:
-            raise ToolBusinessError("video_info_path must be provided in kwargs", ErrorCode.EXECUTION_ERROR)
-        
-        with open(video_info_path, 'r', encoding='utf-8') as f:
+            raise ToolBusinessError(
+                "video_info_path must be provided in kwargs",
+                ErrorCode.EXECUTION_ERROR
+            )
+
+        with open(video_info_path, "r", encoding="utf-8") as f:
             original_video_info = json.load(f)
-            video_clips_info = original_video_info.get('video_clips_info')
-        
+            video_clips_info = original_video_info.get("video_clips_info")
+
+        if not video_clips_info:
+            raise ToolBusinessError(
+                "video_clips_info is empty or missing in json file",
+                ErrorCode.EXECUTION_ERROR
+            )
+
         search_result = ""
-        for key_word in key_words:
-            single_search_result = self.single_search(key_word, video_clips_info)
+
+        for key_word in normalized_keywords:
+            single_search_result = self.search_nearest_matches_for_single_keyword(
+                video_id=video_id,
+                key_word=key_word,
+                video_clips_info=video_clips_info,
+            )
+
             result_num = len(single_search_result)
-            if result_num > max_search_results:
-                for subelement in single_search_result[max_search_results:]:
-                    single_search_result.remove(subelement)
 
             if result_num > max_search_results:
-                search_result += f"A Caption search for `{key_word}` found {result_num} results. To shorten response, the first {max_search_results} results are listed below:\n\n{single_search_result}"
+                displayed_result = single_search_result[:max_search_results]
+                search_result += (
+                    f"A Caption search for `{key_word}` found {result_num} results. "
+                    f"To shorten response, the first {max_search_results} results are listed below:\n\n"
+                    f"{displayed_result}"
+                )
             else:
-                search_result += f"A Caption search for `{key_word}` found {result_num} results:\n\n{single_search_result}"
+                search_result += (
+                    f"A Caption search for `{key_word}` found {result_num} results:\n\n"
+                    f"{single_search_result}"
+                )
+
             search_result += "\n\n=============================\n\n"
         search_result = search_result.strip("\n\n=============================\n\n")
 
-        return {"result": search_result, "mm_result": []}
+        return {
+            "result": search_result,
+            "mm_result": [],
+        }
+
+
+# class SearchTool(BaseApiTool):
+#     """
+#     用于读取所有包含待搜索关键词的caption
+#     """
+#     def __init__(self):
+#         super().__init__(tool_name="omni:search", resource_type="omni")
+
+#     def single_search(
+#         self,
+#         key_word: str,
+#         video_clips_info: List[Dict[str, Any]],
+#     ) -> List[Dict[str, Any]]:
+#         single_search_result = []
+#         for video_clip_info in video_clips_info:
+#             caption = video_clip_info.get('caption')
+#             if key_word.lower() in caption.lower():
+#                 single_search_result.append(video_clip_info)
+
+#         return single_search_result
+
+#     async def execute(
+#         self,
+#         key_words: Union[str, List[str]],
+#         max_search_results: int,
+#         **kwargs,
+#     ):
+#         """
+#         Search for keywords in all captions
+        
+#         Args:
+#             key_words: Keywords (string or list)
+#             max_search_results: Maximum number of search results
+#         """
+#         if isinstance(key_words, str):       
+#             key_words = [key_words]
+        
+#         # jsonl中的每一个视频info: video_path, video_clips_info(instruction会去掉放到seeds.jsonl中), output_dir(视频输出目录)
+#         # 都会保存为一个独立的json文件
+#         video_info_path = kwargs.get('video_info_path')   
+
+#         if not video_info_path:
+#             raise ToolBusinessError("video_info_path must be provided in kwargs", ErrorCode.EXECUTION_ERROR)
+        
+#         with open(video_info_path, 'r', encoding='utf-8') as f:
+#             original_video_info = json.load(f)
+#             video_clips_info = original_video_info.get('video_clips_info')
+        
+#         search_result = ""
+#         for key_word in key_words:
+#             single_search_result = self.single_search(key_word, video_clips_info)
+#             result_num = len(single_search_result)
+#             if result_num > max_search_results:
+#                 for subelement in single_search_result[max_search_results:]:
+#                     single_search_result.remove(subelement)
+
+#             if result_num > max_search_results:
+#                 search_result += f"A Caption search for `{key_word}` found {result_num} results. To shorten response, the first {max_search_results} results are listed below:\n\n{single_search_result}"
+#             else:
+#                 search_result += f"A Caption search for `{key_word}` found {result_num} results:\n\n{single_search_result}"
+#             search_result += "\n\n=============================\n\n"
+#         search_result = search_result.strip("\n\n=============================\n\n")
+
+#         return {"result": search_result, "mm_result": []}
 
 class ReadTool(BaseApiTool):
     """
@@ -754,8 +658,8 @@ extract_clip = register_api_tool(
     description="Extract clip from multimodal data"
 )(ExtractClipTool())
 
-stateless_code_execute = register_api_tool(
-    name="omni:run_python",
-    config_key="omni",
-    description="Execute code"
-)(StatelessCodeExecutionTool())
+# stateless_code_execute = register_api_tool(
+#     name="omni:run_python",
+#     config_key="omni",
+#     description="Execute code"
+# )(StatelessCodeExecutionTool())

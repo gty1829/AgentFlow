@@ -18,29 +18,39 @@ def get_omni_tool_schemas() -> List[Dict[str, Any]]:
         get_omni_search_schema(),
         get_omni_read_schema(),
         get_omni_extract_clip_schema(),
-        get_omni_run_python_schema(),
+        # get_omni_run_python_schema(),
     ]
 
 def get_omni_search_schema() -> Dict[str, Any]:
     """
-    Schema for omni:search tool - search keyword matches in video captions.
+    Schema for omni:search tool - search keyword matches in video captions
+    and return the nearest matched clips to a target video_id.
     """
     return {
         "name": "omni:search",
         "description": (
-            "Search for one or more keywords in all video clip captions and return matched clip metadata. "
-            "Matching is case-insensitive. This tool is useful for locating relevant video segments based "
-            "on caption text. Note: video_info_path is automatically provided from kwargs, "
-            "so you do not need to specify it."
+            "Search for one or more keywords in video clip captions and return matched clip metadata "
+            "nearest to a given target video_id. Matching is case-insensitive. "
+            "Each keyword in key_words is searched independently. For each keyword, the tool finds all "
+            "matched clips, sorts them by distance to the target video_id, and returns up to "
+            "max_search_results results in the response. "
         ),
         "parameters": [
+            {
+                "name": "video_id",
+                "type": "string",
+                "description": (
+                    "The target video clip id used as the anchor point for distance comparison."
+                ),
+                "required": True,
+            },
             {
                 "name": "key_words",
                 "type": "array",
                 "array_type": "string",
                 "description": (
-                    "Array of keyword strings to search for in video clip captions. "
-                    "The tool will search each keyword independently and return matched clip information."
+                    "An array of keyword strings to search for in video clip captions. "
+                    "Each keyword is searched independently. Matching is case-insensitive."
                 ),
                 "required": True,
             },
@@ -48,12 +58,46 @@ def get_omni_search_schema() -> Dict[str, Any]:
                 "name": "max_search_results",
                 "type": "integer",
                 "description": (
-                    "Maximum number of search results to keep for each keyword."
+                    "Maximum number of results to display for each keyword."
                 ),
                 "required": True,
             },
         ],
     }
+
+# def get_omni_search_schema() -> Dict[str, Any]:
+#     """
+#     Schema for omni:search tool - search keyword matches in video captions.
+#     """
+#     return {
+#         "name": "omni:search",
+#         "description": (
+#             "Search for one or more keywords in all video clip captions and return matched clip metadata. "
+#             "Matching is case-insensitive. This tool is useful for locating relevant video segments based "
+#             "on caption text. Note: video_info_path is automatically provided from kwargs, "
+#             "so you do not need to specify it."
+#         ),
+#         "parameters": [
+#             {
+#                 "name": "key_words",
+#                 "type": "array",
+#                 "array_type": "string",
+#                 "description": (
+#                     "Array of keyword strings to search for in video clip captions. "
+#                     "The tool will search each keyword independently and return matched clip information."
+#                 ),
+#                 "required": True,
+#             },
+#             {
+#                 "name": "max_search_results",
+#                 "type": "integer",
+#                 "description": (
+#                     "Maximum number of search results to keep for each keyword."
+#                 ),
+#                 "required": True,
+#             },
+#         ],
+#     }
 
 def get_omni_read_schema() -> Dict[str, Any]:
     """

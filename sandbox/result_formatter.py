@@ -98,7 +98,7 @@ async with HTTPServiceClient(base_url="http://localhost:8080") as client:
 ```
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import json
@@ -136,7 +136,7 @@ class ToolResult(ABC):
         self.execution_time = self.metadata.get("execution_time_ms", 0)
 
     @abstractmethod
-    def to_str(self, verbose: bool = False) -> str:
+    def to_str(self, verbose: bool = False) -> Union[str, Dict[str, Any]]:  # 兼容接口，不改名称了
         """
         Convert result into a string representation.
 
@@ -694,7 +694,32 @@ class SQLResult(ToolResult):
         except Exception:
             return str(result_data)
 
-
+# ============================================================================
+# Omni tool result.
+# ============================================================================
+class OmniResult(ToolResult):
+    """
+    Omni tool result
+    Raw data schema:
+    {
+        "result": str,
+        "mm_result": List[Dict[str, Any]]
+    }
+    """
+    def to_str(self, verbose: bool = False) -> Union[str, Dict[str, Any]]:
+        if not self.success:
+            error_msg = self.metadata.get("message", "Omni tool failed")
+            return {
+                "text_info": error_msg,
+                "mm_info": []
+            }
+        text_info = self.raw_data.get("result", "")
+        mm_info = self.raw_data.get("mm_result", [])
+        return {
+            "text_info": text_info,
+            "mm_info": mm_info
+        }
+    
 # ============================================================================
 # Result formatter factory.
 # ============================================================================
@@ -724,6 +749,7 @@ class ResultFormatter:
         "vm": VMResult,
         "doc": DocResult,
         "ds": DocResult,
+        "omni": OmniResult,
     }
 
     @classmethod
@@ -799,6 +825,8 @@ class ResultFormatter:
             or tool_name.startswith("ds-")
         ):
             formatter_class = DocResult
+        elif tool_name.startswith("omni:"):
+            formatter_class = OmniResult
         else:
             # Prefer resource_type, then infer from tool_name prefix.
             tool_type = resource_type or tool_name.split(":")[0] if ":" in tool_name else tool_name
@@ -822,7 +850,7 @@ class ResultFormatter:
         cls,
         response: Dict[str, Any],
         verbose: bool = False
-    ) -> str:
+    ) -> Union[str, Dict[str, Any]]:
         """
         Format response directly into a string.
 
@@ -831,7 +859,7 @@ class ResultFormatter:
             verbose: Whether to include detailed information.
 
         Returns:
-            Formatted string.
+            Formatted string or dictionary.
         """
         formatter = cls.format(response)
         return formatter.to_str(verbose=verbose)
@@ -864,7 +892,7 @@ class ResultFormatter:
 # Convenience function.
 # ============================================================================
 
-def format_tool_result(response: Dict[str, Any], verbose: bool = False) -> str:
+def format_tool_result(response: Dict[str, Any], verbose: bool = False) -> Union[str, Dict[str, Any]]:
     """
     Convenience helper: format tool execution result.
 
@@ -873,7 +901,7 @@ def format_tool_result(response: Dict[str, Any], verbose: bool = False) -> str:
         verbose: Whether to include detailed information.
 
     Returns:
-        Formatted string, ready to use as tool response.
+        Formatted string or dictionary, ready to use as tool response.
 
     Example:
     ```python

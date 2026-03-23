@@ -74,8 +74,9 @@ async def test_read(sandbox: Sandbox):
 
 async def test_search_caption(sandbox: Sandbox):
     return await test_tool(sandbox, "omni:search", {
-        "key_words": ["A man with a beard", "dog", "beard"],
+        "key_words": ["A man is centered", "dog", "beard"],
         "max_search_results": 3,
+        "video_id": "005",
         "video_info_path": "/share/project/guotianyu/AgentFlow/test/test_data/video_info_jsons/_LzSK2l6Fkc.json",
     })
 
@@ -110,7 +111,7 @@ async def main():
         await test_extract_clip_av(sandbox)
         # await test_extract_clip_video(sandbox)
         # await test_extract_clip_audio(sandbox)
-        # await test_search_caption(sandbox)
+        await test_search_caption(sandbox)
         # await test_read(sandbox)
         # await test_run_python_text(sandbox)
         # await test_run_python_file(sandbox)

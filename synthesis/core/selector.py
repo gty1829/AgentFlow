@@ -17,10 +17,10 @@ class TrajectorySelector:
         self.config = config
         self.available_tool_total: int = 0
 
-        self.client = create_openai_client(
-            api_key=self.config.api_key,
-            base_url=self.config.base_url,
-        )
+        # self.client = create_openai_client(
+        #     api_key=self.config.api_key,
+        #     base_url=self.config.base_url,
+        # )
 
     def select_trajectories(self,
                            nodes: Dict[str, TrajectoryNode],
@@ -58,7 +58,17 @@ class TrajectorySelector:
         print(f"Built {len(candidate_paths)} candidate paths")
 
         # 4. Score and select
-        selected = self._score_and_select(candidate_paths, seed_data, source_id, max_selected_traj)
+        # selected = self._score_and_select(candidate_paths, seed_data, source_id, max_selected_traj)
+        selected = []
+        for idx, path in enumerate(candidate_paths):
+            trajectory = Trajectory(
+                trajectory_id=f"{source_id}_traj_{idx}",
+                nodes=path,
+                seed_data=seed_data,
+                source_id=source_id,
+                total_depth=len(path)
+            )
+            selected.append(trajectory)
 
         print(f"\n✅ Selected {len(selected)} trajectories")
 

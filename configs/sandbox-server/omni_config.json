@@ -6,19 +6,7 @@
     },
     "apis": {
       "omni": {
-        "max_search_results": 10,
-        "completion_config":{
-          "model": "ep-20260317031559-av3m2",
-          "api_key": "8407460c-9a3d-4a32-bb0d-43e91a74304f",
-          "api_url": "https://kspmas.ksyun.com/v1",
-          "max_tokens": 65536,
-          "connect_timeout": 300,
-          "read_timeout":180,
-          "top_p": 0.95,
-          "top_k": 20,
-          "retry_interval": 1.0,
-          "retry_max_attempts": 10
-        }
+        "max_search_results": 10
       }
     }
   }

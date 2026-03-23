@@ -12,7 +12,7 @@ from sandbox import format_tool_result
 from .models import TrajectoryNode
 from .config import SynthesisConfig
 from .worker import SandboxWorker
-from .utils import create_openai_client, parse_action_xml, async_chat_completion
+from .utils import parse_action_xml, async_chat_completion
 
 from sandbox.tool_schemas import get_tool_schemas
 
@@ -23,13 +23,7 @@ class TrajectorySampler:
     def __init__(self, worker: SandboxWorker, config: SynthesisConfig):
         """Initialize sampler"""
         self.worker = worker
-        self.config = config
-
-        # Initialize OpenAI client
-        self.client = create_openai_client(
-            api_key=self.config.api_key,
-            base_url=self.config.base_url,
-        )
+        self.config = config    # SynthesisConfig
 
         # Tree storage
         self.nodes: Dict[str, TrajectoryNode] = {}
@@ -44,7 +38,7 @@ class TrajectorySampler:
 
     async def sample_trajectory_tree(
         self,
-        seed_data: str,
+        seed_data: Dict[str, Any],
         seed_kwargs: Optional[Dict[str, Any]] = None
     ) -> Dict[str, TrajectoryNode]:
         """Sample a trajectory tree starting from seed data (async)"""
@@ -53,7 +47,7 @@ class TrajectorySampler:
 
         print(f"\n{'='*60}")
         print(f"Starting Trajectory Sampling")
-        print(f"Seed: video_id: {seed_data['content']['video_id']} | start_time: {seed_data['content']['start_time']} | end_time: {seed_data['content']['end_time']} | caption: {seed_data['content']['caption'][:100]}...")
+        print(f"Seed: video_id: {seed_data['video_id']} | start_time: {seed_data['start_time']} | end_time: {seed_data['end_time']} | caption: {seed_data['caption'][:100]}...")
         if seed_kwargs:
             print(f"Kwargs: {seed_kwargs}")
         print(f"{'='*60}\n")
@@ -78,7 +72,7 @@ class TrajectorySampler:
         root_id = self._generate_node_id()
         root_node = TrajectoryNode(
             node_id=root_id,
-            observation={"text_info":f"Starting point: {seed_data['content']}", "mm_info": []},
+            observation={"text_info":f"Starting point: {seed_data}", "mm_info": []},
             intent="Initialize exploration",
             action=None,
             parent_id=None,
@@ -94,7 +88,7 @@ class TrajectorySampler:
         print(f"\n✅ Sampling complete. Total nodes: {len(self.nodes)}")
         return self.nodes
 
-    async def _explore_node(self, node: TrajectoryNode, seed_data: str):
+    async def _explore_node(self, node: TrajectoryNode, seed_data: Dict[str, Any]):
         """Explore from a node (async breadth-first for siblings)"""
         # 如果超过最大深度，则返回
         if node.depth >= self.config.max_depth:
@@ -113,7 +107,7 @@ class TrajectorySampler:
         # Execute all children concurrently
         await asyncio.gather(*child_tasks, return_exceptions=True)
 
-    async def _create_and_explore_child(self, parent_node: TrajectoryNode, seed_data: str):
+    async def _create_and_explore_child(self, parent_node: TrajectoryNode, seed_data: Dict[str, Any]):
         """Create and explore a single child node"""
         max_retries = 3
         retry_wait = 0.5
@@ -159,14 +153,14 @@ class TrajectorySampler:
             f"{intent}"
         )
         print(f"\033[36m[params]:\n\033[0m {json.dumps(action_data.get('parameters', {}), ensure_ascii=False)}")
-        preview = observation[:1000] + "...\n\n" if len(observation) > 1000 else observation
+        preview = observation["text_info"][:1000] + "...\n\n" if len(observation["text_info"]) > 1000 else observation["text_info"]
         print(f"\033[36m[output]:\n\033[0m {preview}")
 
         # Recursively explore this child
         await self._explore_node(child_node, seed_data)
         return
 
-    async def _generate_next_action(self, node: TrajectoryNode, seed_data: str) -> tuple[str, Optional[Dict[str, Any]]]:
+    async def _generate_next_action(self, node: TrajectoryNode, seed_data: Dict[str, Any]) -> tuple[str, Optional[Dict[str, Any]]]:
         """Generate next action using LLM (async)"""
         # Build context
         context = self._build_context(node, seed_data)
@@ -175,18 +169,16 @@ class TrajectorySampler:
         used_actions_block = self._format_used_actions_for_prompt()
 
         # Build prompt
-        prompt = self._build_exploration_prompt(context, seed_data, used_actions_block)
+        messages = self._build_exploration_prompt(context, seed_data, used_actions_block)
 
         try:
             # 只要保证返回的content是一个列表就没问题了
             response = await async_chat_completion(
-                self.client,
-                model=self.config.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7
+                config=self.config.completion_config,
+                messages=messages,
             )
-            content = response.choices[0].message.content
-            result = parse_action_xml(content)
+            print("response:", response)
+            result = parse_action_xml(response)
             intent = result.get("intent", "")
             action = result.get("action", {})
 
@@ -219,19 +211,17 @@ class TrajectorySampler:
 
             # Use format_tool_result to format the result for agent consumption
             # This handles the new sandbox response format automatically
-            formatted_result = format_tool_result(result, verbose=False)
+            formatted_result = format_tool_result(result, verbose=False)  # {"text_info": str, "mm_info": List[Dict[str, Any]]}
             return formatted_result
         except Exception as e:
             print(f"Error executing {tool_name}: {str(e)}")
-            return f"Error executing {tool_name}: {str(e)}"
+            error_dict = {"text_info": f"Error executing {tool_name}: {str(e)}", "mm_info": []}
+            return error_dict
 
-    def _build_context(self, node: TrajectoryNode, seed_data: str) -> str:
+    def _build_context(self, node: TrajectoryNode, seed_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Build context from current path"""
-        # 把当前节点的路径转换为一个步骤摘要，但是要注意：
-        # observation 目前只包含纯文本返回，不包含多模态数据
-        # context = f"Starting point: {seed_data}\n\n"
-        context = {"text_info":f"Starting point: {seed_data['content']}", "mm_info": []},
-
+        context = []
+        context.append({"text_info": f"Starting point: {seed_data}", "mm_info": []})
         # Trace back to root
         path = []
         current = node
@@ -242,19 +232,25 @@ class TrajectorySampler:
 
         # Format path
         for i, n in enumerate(path, 1):
-            context["text_info"] += f"Step {i}:\n"
-            context["text_info"] += f"  Intent: {n.intent}\n"
+            info_dict = {}
+            text_info = ""
+            text_info += f"Step {i}:\n"
+            text_info += f"  Intent: {n.intent}\n"
             if n.action:
-                context["text_info"] += f"  Action: {n.action.get('tool_name', 'unknown')}\n"
-                context["text_info"] += f"  Parameters: {json.dumps(n.action.get('parameters', {}), ensure_ascii=False)}\n"
-                context["mm_info"].extend(n.observation["mm_info"])
+                text_info += f"  Action: {n.action.get('tool_name', 'unknown')}\n"
+                text_info += f"  Parameters: {json.dumps(n.action.get('parameters', {}), ensure_ascii=False)}\n"
+                info_dict["mm_info"] = n.observation["mm_info"] # mm_info: List[List[Dict[str, Any]]]
+            else:
+                info_dict["mm_info"] = []  # 用于占位，text_info和mm_info对齐
             obs_preview = n.observation["text_info"][:500] + "..." if len(n.observation["text_info"]) > 500 else n.observation["text_info"]
-            context["text_info"] += f"  Observation: {obs_preview}\n\n"
+            text_info += f"  Observation: {obs_preview}\n\n"
+            info_dict["text_info"] = text_info
+            context.append(info_dict)
 
         return context
 
-    def _build_exploration_prompt(self, context: str, seed_data: str, used_actions_block: str = "") -> str:
-        """Build prompt for exploration"""
+    def _build_exploration_prompt(self, context: List[Dict[str, Any]], seed_data: Dict[str, Any], used_actions_block: str = "") -> List[Dict[str, Any]]:
+        """Build prompt for exploration, return a list of messages"""
         # Generate detailed tool descriptions with parameters
         tool_descriptions = []
         for tool in self.available_tools:
@@ -269,11 +265,14 @@ class TrajectorySampler:
             tool_descriptions.append(desc)
 
         tool_descriptions_str = "\n".join(tool_descriptions)
+        
+        messages = []
 
         system_instruction = "You are an intelligent Agent using available tools for exploration and reasoning."
+        messages.append({"role": "system", "content": [{"type": "text", "text": system_instruction}]})
+        messages.append({"role": "user", "content": []})
 
-        prompt = f"""{system_instruction}
-
+        prompt = f"""
 [Starting Point Information]
 Content: {seed_data}"""
 
@@ -299,19 +298,33 @@ You MUST propose a NEW action that is NOT in this list or similar to them to inc
 {self.config.sampling_tips}
 
 """
+        messages[1]['content'].append({"type": "text", "text": prompt})
 
-        prompt += f"""[Current History Trajectory]:
-{context}
+        for ctx in context:
+            text_info_ctx = ctx["text_info"]
+            mm_info_ctx = ctx["mm_info"]
+            
+            for mm_info in mm_info_ctx:
+                # mm_info_ctx: [(b64, fmt, media_type), ...]
+                for mm_info_item in mm_info:
+                    b64, fmt, media_type = mm_info_item["base64_data"], mm_info_item["fmt"], mm_info_item["media_type"]
+                    mm_info = {"type": f"{media_type}_url", f"{media_type}_url": {"url": f"data:{media_type}/{fmt};base64,{b64}"}}
+                    messages[1]['content'].append(mm_info)
+            prompt = f"""[Current History Trajectory]:
+{text_info_ctx}
 
 [Current Observation]:
-{context.split('Observation:')[-1] if 'Observation:' in context else 'Starting exploration'}
+{text_info_ctx.split('Observation:')[-1] if 'Observation:' in text_info_ctx else 'Starting exploration'}
 
 [Available Tools]:
 {tool_descriptions_str}
 
 """
+            text_info = {"type": "text", "text": prompt}
+            messages[1]['content'].append(text_info)
 
-        prompt += """
+
+        prompt = """
 Based on the current state and available tools, select an appropriate tool and parameters, and generate the next action and intent.
 
 IMPORTANT: Return ONLY a valid XML block without other words or markdown.
@@ -320,7 +333,8 @@ Format:
 <tool_name>tool name</tool_name>
 <parameters>{"param": "value"}</parameters>
 """
-        return prompt
+        messages[1]['content'].append({"type": "text", "text": prompt})
+        return messages
 
     def _generate_node_id(self) -> str:
         """Generate unique node ID"""
