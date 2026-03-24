@@ -14,6 +14,13 @@ import argparse
 from pathlib import Path
 from typing import List, Dict, Any
 
+import logging
+logging.basicConfig(
+    filename="/share/project/guotianyu/AgentFlow/logs/run.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    encoding="utf-8"
+)
 # Ensure both the synthesis package directory and project root are importable.
 # This allows running via either:
 #   - python -m synthesis.pipeline
@@ -42,6 +49,7 @@ class SynthesisPipeline:
     def __init__(self, config: SynthesisConfig, output_dir: str = "synthesis_results"):
         """Initialize pipeline"""
         self.config = config
+        print(config)
         agg_output_dir = Path(__file__).resolve().parents[1] / "results" / "ds_synthesized_qa"
         agg_output_dir.mkdir(parents=True, exist_ok=True)
         output_dir = str(agg_output_dir)

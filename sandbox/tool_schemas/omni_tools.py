@@ -18,22 +18,24 @@ def get_omni_tool_schemas() -> List[Dict[str, Any]]:
         get_omni_search_schema(),
         get_omni_read_schema(),
         get_omni_extract_clip_schema(),
-        # get_omni_run_python_schema(),
+        get_omni_run_python_schema(),
     ]
 
 def get_omni_search_schema() -> Dict[str, Any]:
     """
-    Schema for omni:search tool - search keyword matches in video captions
+    Schema for omni:search tool - search a keyword match in video captions
     and return the nearest matched clips to a target video_id.
     """
     return {
         "name": "omni:search",
         "description": (
-            "Search for one or more keywords in video clip captions and return matched clip metadata "
+            "Search for a keyword in video clip captions and return matched clip metadata "
             "nearest to a given target video_id. Matching is case-insensitive. "
-            "Each keyword in key_words is searched independently. For each keyword, the tool finds all "
-            "matched clips, sorts them by distance to the target video_id, and returns up to "
-            "max_search_results results in the response. "
+            "The tool finds all matched clips, sorts them by distance to the target video_id, "
+            "and returns up to max_search_results results in the response."
+            "After calling omni:search, the model should examine the returned captions, select one caption "
+            "whose video or audio content is likely to be relevant to the current trajectory exploration videos or captions, and then call "
+            "omni:extract_clip to extract and inspect the corresponding video clip."
         ),
         "parameters": [
             {
@@ -45,12 +47,11 @@ def get_omni_search_schema() -> Dict[str, Any]:
                 "required": True,
             },
             {
-                "name": "key_words",
-                "type": "array",
-                "array_type": "string",
+                "name": "key_word",
+                "type": "string",
                 "description": (
-                    "An array of keyword strings to search for in video clip captions. "
-                    "Each keyword is searched independently. Matching is case-insensitive."
+                    "A single keyword string to search for in video clip captions. "
+                    "Matching is case-insensitive."
                 ),
                 "required": True,
             },
@@ -58,7 +59,7 @@ def get_omni_search_schema() -> Dict[str, Any]:
                 "name": "max_search_results",
                 "type": "integer",
                 "description": (
-                    "Maximum number of results to display for each keyword."
+                    "Maximum number of matched results to display."
                 ),
                 "required": True,
             },
@@ -148,29 +149,30 @@ def get_omni_extract_clip_schema() -> Dict[str, Any]:
             {
                 "name": "clips",
                 "type": "array",
+                "array_type": "dict",
                 "description": (
                     "List of clip ranges to extract. Each item must contain "
                     "'start_time' and 'end_time'. Example: "
                     "[{'start_time': 1.2, 'end_time': 5.8}]"
                 ),
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "start_time": {
-                            "type": "string",
-                            "description": (
-                                "Clip start time. Can be a number-like string or time string."
-                            ),
-                        },
-                        "end_time": {
-                            "type": "string",
-                            "description": (
-                                "Clip end time. Can be a number-like string or time string."
-                            ),
-                        },
-                    },
-                    "required": ["start_time", "end_time"],
-                },
+                # "items": {
+                #     "type": "object",
+                #     "properties": {
+                #         "start_time": {
+                #             "type": "float",
+                #             "description": (
+                #                 "Clip start time. Can be a float number."
+                #             ),
+                #         },
+                #         "end_time": {
+                #             "type": "float",
+                #             "description": (
+                #                 "Clip end time. Can be a float number."
+                #             ),
+                #         },
+                #     },
+                #     "required": ["start_time", "end_time"],
+                # },
                 "required": True,
             },
             {

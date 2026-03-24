@@ -54,10 +54,10 @@ from synthesis.core.utils import completion
 path = "/share/project/guotianyu/AgentFlow/assets/intro.png"
 response = completion(
     messages=[{"role": "user", "content": [
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64," + _encode_file_to_base64(path)[0]}}, 
-        {"type": "text", "text": "What is the picture about?"}
+        #{"type": "image_url", "image_url": {"url": "data:image/png;base64," + _encode_file_to_base64(path)[0]}}, 
+        {"type": "text", "text": "Who are you?"}
     ]}],
-    model="ep-20260317033626-qkz4b",
+    model="ep-20260317031559-av3m2",
     completion_config={
         "api_url": "https://kspmas.ksyun.com/v1/models/ep-20260317031559-av3m2:generateContent",
         "api_key": "8407460c-9a3d-4a32-bb0d-43e91a74304f",

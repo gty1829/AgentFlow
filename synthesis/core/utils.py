@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 from typing import Any, Dict, Tuple, Type, List
 import pdb
 
+import random
 import requests
 import openai
 
@@ -241,10 +242,12 @@ def _build_openai_payload(
     # response_format: Dict[str, Any],
     # extra_body: Dict[str, Any],
 ) -> Dict[str, Any]:
+    seed = random.randint(1, 100000)
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
         "temperature": temperature,
+        "seed": seed,
         # **extra_body,
     }
 

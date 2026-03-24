@@ -73,26 +73,6 @@ class SearchTool(BaseApiTool):
     def __init__(self):
         super().__init__(tool_name="omni:search", resource_type="omni")
 
-    def _normalize_keywords(self, key_words: Union[str, List[str]]) -> List[str]:
-        # 会对搜索词做去重
-        if isinstance(key_words, str):
-            key_words = [key_words]
-
-        result = []
-        seen = set()
-        for kw in key_words:
-            if not isinstance(kw, str):
-                continue
-            kw = kw.strip()
-            if not kw:
-                continue
-            kw_lower = kw.lower()
-            if kw_lower in seen:
-                continue
-            seen.add(kw_lower)
-            result.append(kw)
-        return result
-
     def _find_target_index(
         self,
         video_id: str,
@@ -146,7 +126,7 @@ class SearchTool(BaseApiTool):
 
     async def execute(
         self,
-        key_words: Union[str, List[str]],
+        key_word: str,
         max_search_results: int,
         video_id: str,
         **kwargs,
@@ -164,13 +144,15 @@ class SearchTool(BaseApiTool):
                 "max_search_results must be greater than 0",
                 ErrorCode.EXECUTION_ERROR
             )
-
-        normalized_keywords = self._normalize_keywords(key_words)
-        if not normalized_keywords:
+        
+        if not isinstance(key_word, str) or not key_word.strip():
             raise ToolBusinessError(
-                "key_words must not be empty",
+                "key_word must not be empty",
                 ErrorCode.EXECUTION_ERROR
             )
+
+        key_word = key_word.strip()
+        key_word = key_word.lower()
 
         video_info_path = kwargs.get("video_info_path")
         if not video_info_path:
@@ -191,29 +173,28 @@ class SearchTool(BaseApiTool):
 
         search_result = ""
 
-        for key_word in normalized_keywords:
-            single_search_result = self.search_nearest_matches_for_single_keyword(
-                video_id=video_id,
-                key_word=key_word,
-                video_clips_info=video_clips_info,
+        single_search_result = self.search_nearest_matches_for_single_keyword(
+            video_id=video_id,
+            key_word=key_word,
+            video_clips_info=video_clips_info,
+        )
+
+        result_num = len(single_search_result)
+
+        if result_num > max_search_results:
+            displayed_result = single_search_result[:max_search_results]
+            search_result += (
+                f"A Caption search for `{key_word}` found {result_num} results. "
+                f"To shorten response, the first {max_search_results} results are listed below:\n\n"
+                f"{displayed_result}"
+            )
+        else:
+            search_result += (
+                f"A Caption search for `{key_word}` found {result_num} results:\n\n"
+                f"{single_search_result}"
             )
 
-            result_num = len(single_search_result)
-
-            if result_num > max_search_results:
-                displayed_result = single_search_result[:max_search_results]
-                search_result += (
-                    f"A Caption search for `{key_word}` found {result_num} results. "
-                    f"To shorten response, the first {max_search_results} results are listed below:\n\n"
-                    f"{displayed_result}"
-                )
-            else:
-                search_result += (
-                    f"A Caption search for `{key_word}` found {result_num} results:\n\n"
-                    f"{single_search_result}"
-                )
-
-            search_result += "\n\n=============================\n\n"
+        search_result += "\n\n=============================\n\n"
         search_result = search_result.strip("\n\n=============================\n\n")
 
         return {
