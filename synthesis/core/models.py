@@ -16,6 +16,7 @@ class TrajectoryNode:
     parent_id: Optional[str] = None
     children_ids: List[str] = field(default_factory=list)
     depth: int = 0
+    stop_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format"""

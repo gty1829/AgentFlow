@@ -102,6 +102,7 @@ class TrajectorySampler:
         """Explore from a node (async breadth-first for siblings)"""
         # 如果超过最大深度，则返回
         if node.depth >= self.config.max_depth:
+            node.stop_reason = "max_depth"
             return
 
         # 根据当前深度决定分支数
@@ -154,6 +155,7 @@ class TrajectorySampler:
 
         self.nodes[child_id] = child_node
         parent_node.children_ids.append(child_id)
+        print(f"parent_node.node_id: {parent_node.node_id}, len(children_ids): {len(parent_node.children_ids)}")
 
         self.node_messages[child_id] = messages
 
@@ -173,6 +175,8 @@ class TrajectorySampler:
 
         # 分支结束后写 jsonl
         if len(child_node.children_ids) == 0:
+            if child_node.stop_reason is None:
+                child_node.stop_reason = "no_further_expansion"
             await self._dump_branch_messages_jsonl(child_node, seed_data)
         return
 
@@ -204,22 +208,27 @@ class TrajectorySampler:
                 "content": [{"type": "text", "text": response}]
             })
 
-            if action and isinstance(action, dict):
-                # Check for duplicate action
-                sig = self._action_signature(action, intent=intent)
-                if sig in self._seed_used_action_signatures:
-                    print(f"  ⚠️ Duplicate action detected, skipping: {sig}")
-                    return "", None, messages_with_response
-                # Record the action signature
-                self._seed_used_action_signatures.add(sig)
-                self._seed_used_action_signatures_ordered.append(sig)
-
+            # if action and isinstance(action, dict):
+            #     # Check for duplicate action
+            #     sig = self._action_signature(action, intent=intent)
+            #     if sig in self._seed_used_action_signatures:
+            #         print(f"  ⚠️ Duplicate action detected, skipping: {sig}")
+            #         return "", None, messages_with_response
+            #     # Record the action signature
+            #     self._seed_used_action_signatures.add(sig)
+            #     self._seed_used_action_signatures_ordered.append(sig)
             return intent, action, messages_with_response
 
         except Exception as e:
             if isinstance(e, bdb.BdbQuit):
                 raise e
             print(f"  ⚠️ LLM generation failed: {e}")
+            messages_with_response = copy.deepcopy(messages)
+            messages_with_response.append({
+                "role": "assistant",
+                "content": [{"type": "text", "text": f"LLM generation failed:: {str(e)}"}],
+                "is_error": True,
+            })
             return "", None, messages_with_response
 
     async def _execute_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
@@ -265,6 +274,7 @@ class TrajectorySampler:
             else:
                 info_dict["mm_info"] = []  # 用于占位，text_info和mm_info对齐
 
+            # TODO: 去掉observation的压缩
             if len(path) <= 2 or i > len(path) - 2:
                 # 最近的两个加载完整信息，其他加载部分信息
                 text_info += f"  Observation: {n.observation['text_info']}\n\n"
@@ -445,6 +455,7 @@ Content: {seed_data}"""
         record = {
             "seed_data": seed_data,
             "leaf_node_id": leaf_node.node_id,
+            "leaf_stop_reason": leaf_node.stop_reason,
             "depth": leaf_node.depth,
             "branch_node_ids": branch_node_ids,
             "branch_actions": branch_actions,

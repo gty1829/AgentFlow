@@ -9,9 +9,9 @@
       "retry_max_attempts": 10
     },
     
-    "max_depth": 20,
-    "branching_factor": 3,
-    "depth_threshold": 3,
+    "max_depth": 15,
+    "branching_factor": 2,
+    "depth_threshold": 2,
     
     "min_depth": 3,
     "max_selected_traj": 2,
